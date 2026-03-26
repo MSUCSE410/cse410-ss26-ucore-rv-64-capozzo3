@@ -4,6 +4,7 @@
 #include "syscall_ids.h"
 #include "timer.h"
 #include "trap.h"
+#include "vm.h"
 
 uint64 sys_write(int fd, uint64 va, uint len)
 {
@@ -32,11 +33,19 @@ uint64 sys_sched_yield()
 	return 0;
 }
 
-uint64 sys_gettimeofday(TimeVal *val, int _tz) // TODO: implement sys_gettimeofday in pagetable. (VA to PA)
+uint64 sys_gettimeofday(uint64 val_va, int _tz) // TODO: implement sys_gettimeofday in pagetable. (VA to PA)
 {
 	// YOUR CODE
-	val->sec = 0;
-	val->usec = 0;
+	//val->sec = 0;
+	//val->usec = 0;
+
+	struct proc *p = curr_proc();
+	TimeVal *val = (TimeVal *)useraddr(p->pagetable, val_va);
+	if (val == 0) return -1;
+
+	uint64 cycle = get_cycle();
+	val->sec = cycle / CPU_FREQ;
+	val->usec = (cycle % CPU_FREQ) * 1000000 / CPU_FREQ;
 
 	/* The code in `ch3` will leads to memory bugs*/
 
@@ -52,8 +61,10 @@ uint64 sys_gettimeofday(TimeVal *val, int _tz) // TODO: implement sys_gettimeofd
 /*
 * LAB1: you may need to define sys_task_info here
 */
-int sys_task_info(TaskInfo *ti) {
+int sys_task_info(uint64 ti_va) {
 	struct proc *p = curr_proc();
+	TaskInfo *ti = (TaskInfo* )useraddr(p->pagetable, ti_va);
+	if (ti == 0) return -1;
 
 	if (p->state == RUNNING) {
 		ti->status = Running;
@@ -74,6 +85,97 @@ int sys_task_info(TaskInfo *ti) {
 
 	ti->time = (int)(get_time() - p->start_time);
 
+	return 0;
+}
+
+uint64 sys_mmap(uint64 start, uint64 len, int port, int flag, int fd)
+{
+	// return directly
+	if (len == 0) return 0;
+
+	// validate port
+	if ((port & ~0x7) != 0) return -1;
+	if ((port & 0x7) == 0) return -1;
+
+	// validate start page alignment
+	if (!PGALIGNED(start)) return -1;
+
+	// round len up to next page boundary
+	len = PGROUNDUP(len);
+
+	// len upper limit 1 GiB
+	if (len > (1UL << 30)) return -1;
+
+	// port permission flags
+	int perm = PTE_U;
+	if (port & 1) perm |= PTE_R;
+	if (port & 2) perm |= PTE_W;
+	if (port & 4) perm |= PTE_X;
+
+	struct proc *p = curr_proc();
+	uint64 npages = len / PGSIZE;
+
+	// iterate through associated pages
+	for (uint64 i = 0; i < npages; i++) {
+		uint64 va = start + i * PGSIZE;
+
+		// check if not already mapped
+		if (walkaddr(p->pagetable, va) != 0) {
+			// if it is, undo our mapping
+			for (uint64 j = 0; j < i; j++) {
+				uint64 uva = start + j * PGSIZE;
+				uint64 pa = walkaddr(p->pagetable, uva);
+				uvmunmap(p->pagetable, uva, 1, 1);
+				(void)pa;
+			}
+			return -1;
+		}
+
+		void *mem = kalloc();
+		if (mem == 0) {
+			// out of memory, undo our mapping
+			for (uint64 j = 0; j < i; j++) {
+				uvmunmap(p->pagetable, start + j * PGSIZE, 1, 1);
+			}
+			return -1;
+		}
+
+		memset(mem, 0, PGSIZE);
+
+		if (mappages(p->pagetable, va, PGSIZE, (uint64)mem, perm) != 0) {
+			kfree(mem);
+			for (uint64 j = 0; j < i; j++) {
+				uvmunmap(p->pagetable, start + j * PGSIZE, 1, 1);
+			}
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+uint64 sys_munmap(uint64 start, uint64 len)
+{
+	if (len == 0) return 0;
+
+	// validate start and end page alignment
+	if (!PGALIGNED(start)) return -1;
+
+	// round len up to next page boundary
+	len = PGROUNDUP(len);
+
+	// len upper limit 1 GiB
+	if (len > (1UL << 30)) return -1;
+
+	struct proc *p = curr_proc();
+	uint64 npages = len / PGSIZE;
+
+	// verify pages are actually mapped
+	for (uint64 i = 0; i < npages; i++) {
+		if (walkaddr(p->pagetable, start + i * PGSIZE) == 0) return -1;
+	}
+
+	uvmunmap(p->pagetable, start, npages, 1);
 	return 0;
 }
 
@@ -104,13 +206,19 @@ void syscall()
 		ret = sys_sched_yield();
 		break;
 	case SYS_gettimeofday:
-		ret = sys_gettimeofday((TimeVal *)args[0], args[1]);
+		ret = sys_gettimeofday(args[0], args[1]);
 		break;
 	/*
 	* LAB1: you may need to add SYS_taskinfo case here
 	*/
 	case SYS_task_info:
-		ret = sys_task_info((TaskInfo *)args[0]);
+		ret = sys_task_info(args[0]);
+		break;
+	case SYS_mmap:
+		ret = sys_mmap(args[0], args[1], args[2], args[3], args[4]);
+		break;
+	case SYS_munmap:
+		ret = sys_munmap(args[0], args[1]);
 		break;
 	default:
 		ret = -1;
