@@ -73,7 +73,7 @@ struct proc *fetch_task()
 		if (pool[task_queue.data[pos]].stride <
 			pool[task_queue.data[min_pos]].stride)
 			min_pos = pos;
-		if (pos == (task_queue.tail - 1 + NPROC) % NPROC)
+		if (pos == (task_queue.tail - 1 + NPROC) % NPROC) // handle wraparound of circular buffer
 			break;
 		pos = (pos + 1) % NPROC;
 	}
@@ -150,11 +150,12 @@ void scheduler()
 		if(has_proc == 0) {
 			panic("all app are over!\n");
 		}*/
+		// fetches task with smallest stride from queue
 		p = fetch_task();
 		if (p == NULL) {
 			panic("all app are over!\n");
 		}
-		
+
 		// advance the process's stride by the pass value
 		// higher prio = smaller pass = stride grows slower and is scheduled more often
 		p->stride += BIG_STRIDE / p->priority;

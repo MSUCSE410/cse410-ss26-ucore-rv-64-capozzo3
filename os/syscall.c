@@ -222,12 +222,12 @@ uint64 sys_spawn(uint64 va)
 		return -1;
 
 	struct proc *child = allocproc();
-	if (child == NULL) // child failed to be created
+	if (child == NULL) // process pool is full
 		return -1;
 
 	// program is loaded directly to the child
-	if (loader(id, child) < 0) {
-		freeproc(child); // child failed to load
+	if (loader(id, child) < 0) { // if fails, freeproc to clean up
+		freeproc(child);
 		return -1;
 	}
 

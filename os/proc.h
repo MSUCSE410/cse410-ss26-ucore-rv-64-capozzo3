@@ -8,7 +8,7 @@
 #define NPROC (512)
 #define FD_BUFFER_SIZE (16)
 #define MAX_SYSCALL_NUM 500
-#define BIG_STRIDE 0x7fffffffULL
+#define BIG_STRIDE 0x7fffffffULL // unsigned long long
 
 struct file;
 
@@ -51,7 +51,7 @@ struct proc {
 	uint64 start_time;
 	unsigned int syscall_times[MAX_SYSCALL_NUM];
 
-	// stride scheduling
+	// stride scheduling. uint64 used to prevent wraparound
 	uint64 stride;
 	uint64 priority;
 };
