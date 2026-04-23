@@ -267,20 +267,27 @@ uint64 sys_spawn(uint64 va)
 	char name[200];
 	copyinstr(p->pagetable, name, va, 200);
 
-	int id = get_id_by_name(name);
-	if (id < 0)	// invalid filename
-		return -1;
+	// int id = get_id_by_name(name);
+	// if (id < 0)	// invalid filename
+	// 	return -1;
+
+	struct inode *ip = namei(name);
+	if (ip == 0) return -1;
 
 	struct proc *child = allocproc();
-	if (child == NULL) // child failed to be created
-		return -1;
-
-	// program is loaded directly to the child
-	if (loader(id, child) < 0) {
-		freeproc(child); // child failed to load
+	if (child == NULL) { // process pool is full
+		iput(ip);
 		return -1;
 	}
 
+	// program is loaded directly to the child
+	if (bin_loader(ip, child) < 0) {
+		iput(ip);
+		freeproc(child); // if fails, freeproc to clean up
+		return -1;
+	}
+
+	iput(ip);
 	child->parent = p;
 	add_task(child);
 	return child->pid;
