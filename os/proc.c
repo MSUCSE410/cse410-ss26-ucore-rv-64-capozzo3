@@ -84,6 +84,11 @@ struct proc *fetch_task()
 	task_queue.data[min_pos] = tmp;
 
 	int index = pop_queue(&task_queue);
+	if (index < 0) {
+		debugf("No task to fetch\n");
+		return NULL;
+	}
+	debugf("fetch task %d(pid=%d) to task queue\n", index, pool[index].pid);
 	return pool + index;
 }
 
