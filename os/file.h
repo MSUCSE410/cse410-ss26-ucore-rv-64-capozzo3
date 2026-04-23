@@ -8,6 +8,18 @@
 #define PIPESIZE (512)
 #define FILEPOOLSIZE (NPROC * FD_BUFFER_SIZE)
 
+#define DIR 0x040000
+#define FILE 0x100000
+
+// sys_fstat status structure
+typedef struct {
+	uint64 dev; // drive number of the disk where the file is located, to be 0
+	uint64 ino; // Inode the inode number where the inode file is located
+	uint32 mode; // file Type
+	uint32 nlink; // The number of hard links, initially 1
+	uint64 pad[7]; // for compatibility only, can be ignored.
+} Stat;
+
 // in-memory copy of an inode,it can be used to quickly locate file entities on disk
 struct inode {
 	uint dev; // Device number
@@ -15,6 +27,7 @@ struct inode {
 	int ref; // Reference count
 	int valid; // inode has been read from disk?
 	short type; // copy of disk inode
+	short nlink; // number of hard links
 	uint size;
 	uint addrs[NDIRECT + 1];
 	// LAB4: You may need to add link count here

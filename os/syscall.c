@@ -327,18 +327,86 @@ uint64 sys_close(int fd)
 }
 
 int sys_fstat(int fd,uint64 stat){
-	//TODO: your job is to complete the syscall
-	return -1;
+	struct proc *p = curr_proc();
+	if (fd < 0 || fd >= FD_BUFFER_SIZE)
+		return -1;
+
+	struct file *f = p->files[fd];
+	if (f == 0 || f->type != FD_INODE)
+		return -1;
+
+	// translate user VA to kernel-accessible address
+	Stat *st = (Stat *)useraddr(p->pagetable, stat);
+	if (st == 0) return -1;
+
+	ivalid(f->ip);
+	st->dev = f->ip->dev;
+	st->ino = f->ip->inum;
+	st->mode = (f->ip->type == T_DIR) ? DIR : FILE;
+	st->nlink = f->ip->nlink;
+	return 0;
 }
 
-int sys_linkat(int olddirfd, uint64 oldpath, int newdirfd, uint64 newpath, uint64 flags){
-	//TODO: your job is to complete the syscall
-	return -1;
+int sys_linkat(int olddirfd, uint64 oldpath, int newdirfd, uint64 newpath, uint64 flags) {
+	struct proc *p = curr_proc();
+	char old[MAXPATH], new[MAXPATH];
+	copyinstr(p->pagetable, old, oldpath, MAXPATH);
+	copyinstr(p->pagetable, new, newpath, MAXPATH);
+
+	// find the inode the old path points to
+	struct inode *ip = namei(old);
+	if (ip == 0) return -1;
+	ivalid(ip);
+
+	// check if linking to itself
+	if (strncmp(old, new, MAXPATH) == 0) {
+		iput(ip);
+		return -1;
+	}
+	ip->nlink++;
+	iupdate(ip); // update the ip's nlink count
+
+	// add new directory entry pointing to same inode
+	struct inode *dp = root_dir();
+	if (dirlink(dp, new, ip->inum) < 0) {
+		ip->nlink--;
+		iupdate(ip);
+		iput(ip);
+		iput(dp);
+		return -1;
+	}
+
+	iput(ip);
+	iput(dp);
+	return 0;
 }
 
 int sys_unlinkat(int dirfd, uint64 name, uint64 flags){
-	//TODO: your job is to complete the syscall
-	return -1;
+	struct proc *p = curr_proc();
+	char path[MAXPATH];
+	copyinstr(p->pagetable, path, name, MAXPATH);
+
+	struct inode *ip = namei(path);
+	if (ip == 0) return -1;
+	ivalid(ip);
+
+	// remove directory entry
+	struct inode *dp = root_dir();
+	if (dirunlink(dp, path) < 0) {
+		iput(dp);
+		iput(ip);
+		return -1;
+	}
+	iput(dp);
+
+	// decrement nlink
+	ip->nlink--;
+	iupdate(ip);
+
+	// iput will free if nlink == 0
+	iput(ip);
+
+	return 0;
 }
 
 extern char trap_page[];
@@ -413,6 +481,7 @@ void syscall()
 		break;
 	case SYS_unlinkat:
 	    ret = sys_unlinkat(args[0],args[1],args[2]);
+		break;
 	case SYS_spawn:
 		ret = sys_spawn(args[0]);
 		break;
