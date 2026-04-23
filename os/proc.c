@@ -4,6 +4,7 @@
 #include "trap.h"
 #include "vm.h"
 #include "queue.h"
+#include "timer.h"
 
 struct proc pool[NPROC];
 __attribute__((aligned(16))) char kstack[NPROC][PAGE_SIZE];
@@ -32,6 +33,13 @@ void proc_init()
 		p->state = UNUSED;
 		p->kstack = (uint64)kstack[p - pool];
 		p->trapframe = (struct trapframe *)trapframe[p - pool];
+		/*
+		* LAB1: you may need to initialize your new fields of proc here
+		*/
+		p->start_time = 0;
+		for ( int i = 0; i < MAX_SYSCALL_NUM; i++) {
+			p->syscall_times[i] = 0;
+		}
 	}
 	idle.kstack = (uint64)boot_stack_top;
 	idle.pid = IDLE_PID;
@@ -47,12 +55,35 @@ int allocpid()
 
 struct proc *fetch_task()
 {
-	int index = pop_queue(&task_queue);
-	if (index < 0) {
-		debugf("No task to fetch\n");
+	// int index = pop_queue(&task_queue);
+	// if (index < 0) {
+	// 	debugf("No task to fetch\n");
+	// 	return NULL;
+	// }
+	// debugf("fetch task %d(pid=%d) to task queue\n", index, pool[index].pid);
+	// return pool + index;
+
+	if (task_queue.empty)
 		return NULL;
+
+	// find index in queue with minimum stride
+	int min_pos = task_queue.front;
+	int pos = task_queue.front;
+	while (1) {
+		if (pool[task_queue.data[pos]].stride <
+			pool[task_queue.data[min_pos]].stride)
+			min_pos = pos;
+		if (pos == (task_queue.tail - 1 + NPROC) % NPROC)
+			break;
+		pos = (pos + 1) % NPROC;
 	}
-	debugf("fetch task %d(pid=%d) to task queue\n", index, pool[index].pid);
+
+	// swap min entry with the front entry so it will be removed with pop_queue
+	int tmp = task_queue.data[task_queue.front];
+	task_queue.data[task_queue.front] = task_queue.data[min_pos];
+	task_queue.data[min_pos] = tmp;
+
+	int index = pop_queue(&task_queue);
 	return pool + index;
 }
 
@@ -84,6 +115,11 @@ found:
 	p->parent = NULL;
 	p->exit_code = 0;
 	p->pagetable = uvmcreate((uint64)p->trapframe);
+
+	// set stride and priority intial values
+	p->stride = 0;
+	p->priority = 16;
+
 	memset(&p->context, 0, sizeof(p->context));
 	memset((void *)p->kstack, 0, KSTACK_SIZE);
 	memset((void *)p->trapframe, 0, TRAP_PAGE_SIZE);
@@ -118,9 +154,17 @@ void scheduler()
 		if (p == NULL) {
 			panic("all app are over!\n");
 		}
-		tracef("swtich to proc %d", p - pool);
+		
+		// advance the process's stride by the pass value
+		// higher prio = smaller pass = stride grows slower and is scheduled more often
+		p->stride += BIG_STRIDE / p->priority;
+
+		if (p->start_time == 0)
+			p->start_time = get_time();
+
 		p->state = RUNNING;
 		current_proc = p;
+		tracef("swtich to proc %d", p - pool);
 		swtch(&idle.context, &p->context);
 	}
 }
